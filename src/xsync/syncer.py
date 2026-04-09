@@ -139,7 +139,7 @@ class SyncService:
             changed_thread_ids: set[str] = set()
             total_threads = len(thread_seeds)
             for index, (conversation_id, seeds) in enumerate(thread_seeds.items(), start=1):
-                author_username = _seed_author_username(seeds) or "unknown"
+                author_username = _record_author_username(seeds[0]) or "unknown"
                 self.progress(
                     f"Hydrating bookmark thread {index}/{total_threads}: "
                     f"{conversation_id} from @{author_username}"
@@ -147,7 +147,6 @@ class SyncService:
                 thread_records, missing_ids = self._hydrate_thread(
                     conversation_id,
                     seeds,
-                    observed_at,
                 )
                 thread_doc = build_thread_document(conversation_id, thread_records, missing_ids)
                 self.store.upsert_thread(conversation_id, thread_doc, observed_at)
@@ -272,31 +271,41 @@ class SyncService:
         self,
         conversation_id: str,
         seeds: list[dict[str, Any]],
-        observed_at: str,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         records_by_id = {seed["id"]: seed for seed in seeds}
-        author_username = _seed_author_username(seeds)
-        if author_username is None:
-            records = sorted(
-                records_by_id.values(),
-                key=lambda item: (item["post"].get("created_at", ""), item["id"]),
-            )
-            return records, []
+        pending_parent_ids = list(records_by_id)
+        hydrated_parent_ids: set[str] = set()
+        while pending_parent_ids:
+            parent_id = pending_parent_ids.pop()
+            if parent_id in hydrated_parent_ids:
+                continue
+            hydrated_parent_ids.add(parent_id)
 
-        for page in self.api.search_all(
-            query=_bookmark_thread_query(conversation_id, author_username),
-        ):
-            includes = page.get("includes", {})
-            for post in page.get("data", []):
-                record = build_post_record(post, includes)
-                records_by_id[record["id"]] = record
-                self.store.upsert_post(record, "thread", observed_at)
+            parent = records_by_id.get(parent_id)
+            if parent is None:
+                continue
+            author_username = _record_author_username(parent)
+            if author_username is None:
+                continue
+
+            for page in self.api.search_all(
+                query=_bookmark_thread_query(conversation_id, parent_id, author_username),
+            ):
+                includes = page.get("includes", {})
+                for post in page.get("data", []):
+                    record = build_post_record(post, includes)
+                    record_id = record["id"]
+                    if record_id not in records_by_id:
+                        pending_parent_ids.append(record_id)
+                    records_by_id[record_id] = record
 
         records = sorted(
             records_by_id.values(),
             key=lambda item: (item["post"].get("created_at", ""), item["id"]),
         )
         return records, []
+
+
 def _max_snowflake(lhs: str | None, rhs: str | None) -> str | None:
     if lhs is None:
         return rhs
@@ -317,14 +326,17 @@ def _authored_posts_query(username: str) -> str:
     return f"from:{username} -is:reply -is:retweet"
 
 
-def _bookmark_thread_query(conversation_id: str, author_username: str) -> str:
-    return f"conversation_id:{conversation_id} from:{author_username}"
+def _bookmark_thread_query(conversation_id: str, parent_id: str, author_username: str) -> str:
+    return (
+        f"conversation_id:{conversation_id} "
+        f"in_reply_to_tweet_id:{parent_id} "
+        f"from:{author_username}"
+    )
 
 
-def _seed_author_username(seeds: list[dict[str, Any]]) -> str | None:
-    for seed in seeds:
-        author = seed.get("author") or {}
-        username = author.get("username")
-        if username:
-            return str(username)
+def _record_author_username(record: dict[str, Any]) -> str | None:
+    author = record.get("author") or {}
+    username = author.get("username")
+    if username:
+        return str(username)
     return None

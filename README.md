@@ -164,7 +164,7 @@ Environment variables override file values:
 - Bookmarks API returns only the current 800 most recent bookmarks.
 - `xsync` records the first and last time it observed a bookmark because X does not expose the original bookmark timestamp.
 - Authored-post sync fetches original authored posts only and excludes replies/reposts.
-- Bookmark thread hydration fetches only posts from the bookmarked post's author within that conversation, not public replies from other accounts.
+- Bookmark thread hydration keeps the bookmarked post plus same-author continuation posts that directly reply to that kept chain, and excludes side-branch replies.
 - Authored-post backfill and bookmark thread hydration use `search/all`, so they consume paid API credits.
 - Videos and GIFs are stored as metadata plus source URLs and preview images, not full binaries.
 

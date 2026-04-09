@@ -15,9 +15,11 @@ from xsync.syncer import SyncService
 @dataclass
 class FakeApi:
     usage: dict[str, int] = field(default_factory=dict)
+    search_queries: list[str] = field(default_factory=list)
 
     def search_all(self, *, query: str, since_id: str | None = None):  # noqa: ANN202
         self.usage["posts.search_all"] = self.usage.get("posts.search_all", 0) + 1
+        self.search_queries.append(query)
         if query == "from:alice -is:reply -is:retweet":
             yield {
                 "data": [
@@ -35,19 +37,9 @@ class FakeApi:
                 },
             }
             return
-        if query == "conversation_id:100 from:replier":
+        if query == "conversation_id:100 in_reply_to_tweet_id:101 from:replier":
             yield {
                 "data": [
-                    {
-                        "id": "101",
-                        "author_id": "other-2",
-                        "conversation_id": "100",
-                        "created_at": "2026-04-08T09:05:00Z",
-                        "text": "reply post",
-                        "attachments": {"media_keys": ["media-1"]},
-                        "referenced_tweets": [{"id": "100", "type": "replied_to"}],
-                        "public_metrics": {"like_count": 3},
-                    },
                     {
                         "id": "102",
                         "author_id": "other-2",
@@ -70,6 +62,9 @@ class FakeApi:
                     ],
                 },
             }
+            return
+        if query == "conversation_id:100 in_reply_to_tweet_id:102 from:replier":
+            yield {"data": [], "includes": {}}
             return
         yield {
             "data": [
@@ -148,11 +143,14 @@ def test_sync_posts_and_bookmarks(tmp_path: Path) -> None:
     assert (tmp_path / "x-posts" / "200.md").exists()
     assert (tmp_path / "x-posts" / "101.md").exists()
     assert (tmp_path / "x-posts" / "102.md").exists()
+    assert not (tmp_path / "x-posts" / "103.md").exists()
     assert not (tmp_path / "x-posts" / "100.md").exists()
     assert (tmp_path / "x-bookmarks" / "101.md").exists()
     assert (tmp_path / "x-threads" / "100.json").exists()
     assert (tmp_path / "x-media" / "media-1.jpg").exists()
     assert "posts.get_by_ids" not in bookmarks_result.usage
+    assert "conversation_id:100 from:replier" not in api.search_queries
+    assert "conversation_id:100 in_reply_to_tweet_id:101 from:replier" in api.search_queries
 
 
 def test_sync_reports_progress(tmp_path: Path) -> None:
