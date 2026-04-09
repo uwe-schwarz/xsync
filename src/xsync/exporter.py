@@ -168,7 +168,7 @@ def build_thread_document(
     ordered = sorted(posts, key=lambda item: (item["post"].get("created_at", ""), item["id"]))
     return {
         "conversation_id": conversation_id,
-        "root_post_id": conversation_id,
+        "root_post_id": ordered[0]["id"] if ordered else conversation_id,
         "collected_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "posts": ordered,
         "missing_post_ids": sorted(set(missing_post_ids)),

@@ -1,6 +1,6 @@
 # xsync
 
-`xsync` is a Python 3.14+ CLI that archives your X posts and bookmarks into Git-friendly files, keeps sync state in SQLite, hydrates bookmarked threads, downloads image attachments locally, and can auto-commit/push to a private GitHub repo after successful runs.
+`xsync` is a Python 3.14+ CLI that archives your X posts and bookmarks into Git-friendly files, keeps sync state in SQLite, hydrates bookmarked author threads, downloads image attachments locally, and can auto-commit/push to a private GitHub repo after successful runs.
 
 ## What you need from X
 
@@ -40,6 +40,84 @@ Run a full sync:
 ```bash
 uv run xsync sync all
 ```
+
+## Separate archive repo
+
+`xsync` writes archive files into the current working tree, then commits and pushes that same repo.
+
+If you want the code and the archive to live in different repos, use this layout:
+
+1. Keep the source repo in one location, for example `/opt/xsync`.
+2. Create a second private repo, for example `x-archive`, and clone it somewhere else, for example `/srv/x-archive`.
+3. Install or sync `xsync` from the source repo.
+4. Run `xsync` while your current directory is the archive repo.
+
+Example:
+
+```bash
+# code repo
+git clone [email protected]:uwe-schwarz/xsync.git /opt/xsync
+cd /opt/xsync
+uv sync
+
+# archive repo
+git clone [email protected]:you/x-archive.git /srv/x-archive
+cd /srv/x-archive
+/opt/xsync/.venv/bin/xsync init-config
+/opt/xsync/.venv/bin/xsync auth
+/opt/xsync/.venv/bin/xsync sync all
+```
+
+In `/srv/x-archive/.xsync/config.toml`, the `[git]` section should point at the archive repo remote, typically:
+
+```toml
+[git]
+remote = "origin"
+branch = "main"
+auto_push = true
+```
+
+That means:
+
+- the `xsync` repo stores the application code
+- the `x-archive` repo stores the generated posts, bookmarks, threads, media, and manifests
+- automatic commits and pushes happen in the archive repo, not the code repo
+
+## User-wide install with uv
+
+Yes. `uv` can install tools user-wide from a Git repo, so you do not need to clone the code repo onto the target machine if you prefer a simpler setup.
+
+For a public repo:
+
+```bash
+uv tool install git+https://github.com/uwe-schwarz/xsync.git
+```
+
+For a private GitHub repo, SSH is usually simplest:
+
+```bash
+uv tool install git+ssh://[email protected]/uwe-schwarz/xsync.git
+```
+
+Then run it from inside the archive repo:
+
+```bash
+cd /srv/x-archive
+xsync init-config
+xsync auth
+xsync sync all
+```
+
+To update the installed tool later:
+
+```bash
+uv tool upgrade xsync
+```
+
+If `uv` cannot authenticate to a private GitHub repo, either:
+
+- use SSH keys for GitHub
+- or configure GitHub credentials with `gh auth login`
 
 ## Config file
 
@@ -85,7 +163,9 @@ Environment variables override file values:
 
 - Bookmarks API returns only the current 800 most recent bookmarks.
 - `xsync` records the first and last time it observed a bookmark because X does not expose the original bookmark timestamp.
-- Authored-post backfill and thread hydration use `search/all`, so they consume paid API credits.
+- Authored-post sync fetches original authored posts only and excludes replies/reposts.
+- Bookmark thread hydration fetches only posts from the bookmarked post's author within that conversation, not public replies from other accounts.
+- Authored-post backfill and bookmark thread hydration use `search/all`, so they consume paid API credits.
 - Videos and GIFs are stored as metadata plus source URLs and preview images, not full binaries.
 
 ## Systemd

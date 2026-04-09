@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from itertools import islice
 from typing import Any
 
 from xsync.exporter import ArchiveWriter, build_post_record, build_thread_document
@@ -37,7 +36,10 @@ class SyncService:
             since_id = self.store.get_sync_state("authored_since_id")
             max_seen_id = since_id
             changed_post_ids: set[str] = set()
-            for page in self.api.search_all(query=f"from:{username}", since_id=since_id):
+            for page in self.api.search_all(
+                query=_authored_posts_query(username),
+                since_id=since_id,
+            ):
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
@@ -236,47 +238,28 @@ class SyncService:
         observed_at: str,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         records_by_id = {seed["id"]: seed for seed in seeds}
-        missing_lookup_ids: set[str] = set()
-        for page in self.api.search_all(query=f"conversation_id:{conversation_id}"):
+        author_username = _seed_author_username(seeds)
+        if author_username is None:
+            records = sorted(
+                records_by_id.values(),
+                key=lambda item: (item["post"].get("created_at", ""), item["id"]),
+            )
+            return records, []
+
+        for page in self.api.search_all(
+            query=_bookmark_thread_query(conversation_id, author_username),
+        ):
             includes = page.get("includes", {})
             for post in page.get("data", []):
                 record = build_post_record(post, includes)
                 records_by_id[record["id"]] = record
                 self.store.upsert_post(record, "thread", observed_at)
-        for record in records_by_id.values():
-            for ref in record["post"].get("referenced_tweets", []):
-                ref_id = str(ref.get("id"))
-                if ref_id and ref_id not in records_by_id:
-                    missing_lookup_ids.add(ref_id)
-
-        missing_not_found: list[str] = []
-        for chunk in _chunked(sorted(missing_lookup_ids), 100):
-            lookup = self.api.get_posts_by_ids(chunk)
-            includes = lookup.get("includes", {})
-            found_ids: set[str] = set()
-            for post in lookup.get("data", []):
-                record = build_post_record(post, includes)
-                records_by_id[record["id"]] = record
-                found_ids.add(record["id"])
-            for post_id in chunk:
-                if post_id not in found_ids:
-                    missing_not_found.append(post_id)
 
         records = sorted(
             records_by_id.values(),
             key=lambda item: (item["post"].get("created_at", ""), item["id"]),
         )
-        return records, missing_not_found
-
-
-def _chunked(values: list[str], size: int) -> list[list[str]]:
-    iterator = iter(values)
-    chunks: list[list[str]] = []
-    while chunk := list(islice(iterator, size)):
-        chunks.append(chunk)
-    return chunks
-
-
+        return records, []
 def _max_snowflake(lhs: str | None, rhs: str | None) -> str | None:
     if lhs is None:
         return rhs
@@ -291,3 +274,20 @@ def _merge_counts(*mappings: dict[str, int]) -> dict[str, int]:
         for key, value in mapping.items():
             merged[key] = merged.get(key, 0) + value
     return merged
+
+
+def _authored_posts_query(username: str) -> str:
+    return f"from:{username} -is:reply -is:retweet"
+
+
+def _bookmark_thread_query(conversation_id: str, author_username: str) -> str:
+    return f"conversation_id:{conversation_id} from:{author_username}"
+
+
+def _seed_author_username(seeds: list[dict[str, Any]]) -> str | None:
+    for seed in seeds:
+        author = seed.get("author") or {}
+        username = author.get("username")
+        if username:
+            return str(username)
+    return None

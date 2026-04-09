@@ -18,7 +18,7 @@ class FakeApi:
 
     def search_all(self, *, query: str, since_id: str | None = None):  # noqa: ANN202
         self.usage["posts.search_all"] = self.usage.get("posts.search_all", 0) + 1
-        if query.startswith("from:"):
+        if query == "from:alice -is:reply -is:retweet":
             yield {
                 "data": [
                     {
@@ -32,6 +32,42 @@ class FakeApi:
                 ],
                 "includes": {
                     "users": [{"id": "user-1", "username": "alice", "name": "Alice"}],
+                },
+            }
+            return
+        if query == "conversation_id:100 from:replier":
+            yield {
+                "data": [
+                    {
+                        "id": "101",
+                        "author_id": "other-2",
+                        "conversation_id": "100",
+                        "created_at": "2026-04-08T09:05:00Z",
+                        "text": "reply post",
+                        "attachments": {"media_keys": ["media-1"]},
+                        "referenced_tweets": [{"id": "100", "type": "replied_to"}],
+                        "public_metrics": {"like_count": 3},
+                    },
+                    {
+                        "id": "102",
+                        "author_id": "other-2",
+                        "conversation_id": "100",
+                        "created_at": "2026-04-08T09:06:00Z",
+                        "text": "follow-up post",
+                        "referenced_tweets": [{"id": "101", "type": "replied_to"}],
+                        "public_metrics": {"like_count": 4},
+                    },
+                ],
+                "includes": {
+                    "users": [{"id": "other-2", "username": "replier", "name": "Replier"}],
+                    "media": [
+                        {
+                            "media_key": "media-1",
+                            "type": "photo",
+                            "url": "https://cdn.example.com/image.jpg",
+                            "alt_text": "a picture",
+                        }
+                    ],
                 },
             }
             return
@@ -111,6 +147,9 @@ def test_sync_posts_and_bookmarks(tmp_path: Path) -> None:
     assert bookmarks_result.counts["bookmarks_seen"] == 1
     assert (tmp_path / "x-posts" / "200.md").exists()
     assert (tmp_path / "x-posts" / "101.md").exists()
+    assert (tmp_path / "x-posts" / "102.md").exists()
+    assert not (tmp_path / "x-posts" / "100.md").exists()
     assert (tmp_path / "x-bookmarks" / "101.md").exists()
     assert (tmp_path / "x-threads" / "100.json").exists()
     assert (tmp_path / "x-media" / "media-1.jpg").exists()
+    assert "posts.get_by_ids" not in bookmarks_result.usage
