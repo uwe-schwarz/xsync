@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -22,10 +23,17 @@ class SyncResult:
 
 
 class SyncService:
-    def __init__(self, api: XApi, store: StateStore, writer: ArchiveWriter) -> None:
+    def __init__(
+        self,
+        api: XApi,
+        store: StateStore,
+        writer: ArchiveWriter,
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
         self.api = api
         self.store = store
         self.writer = writer
+        self.progress = progress or (lambda _: None)
 
     def sync_posts(self, username: str) -> SyncResult:
         observed_at = utc_now()
@@ -33,13 +41,16 @@ class SyncService:
         run_id = self.store.record_run_start("posts")
         counts = {"posts_upserted": 0}
         try:
+            self.progress(f"Syncing original posts for @{username}")
             since_id = self.store.get_sync_state("authored_since_id")
             max_seen_id = since_id
             changed_post_ids: set[str] = set()
+            pages_seen = 0
             for page in self.api.search_all(
                 query=_authored_posts_query(username),
                 since_id=since_id,
             ):
+                pages_seen += 1
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
@@ -48,8 +59,13 @@ class SyncService:
                     changed_post_ids.add(record["id"])
                     counts["posts_upserted"] += 1
                     max_seen_id = _max_snowflake(max_seen_id, record["id"])
+                self.progress(
+                    f"Posts progress: {counts['posts_upserted']} originals fetched across "
+                    f"{pages_seen} page(s)"
+                )
             if max_seen_id:
                 self.store.set_sync_state("authored_since_id", max_seen_id)
+            self.progress(f"Posts complete: {counts['posts_upserted']} originals")
 
             result = SyncResult(
                 scope="posts",
@@ -97,10 +113,13 @@ class SyncService:
             "bookmarks_removed": 0,
         }
         try:
+            self.progress("Syncing bookmarks")
             bookmark_records: list[dict[str, Any]] = []
             thread_seeds: dict[str, list[dict[str, Any]]] = defaultdict(list)
             seen_bookmark_ids: set[str] = set()
+            bookmark_pages = 0
             for page in self.api.get_bookmarks(user_id):
+                bookmark_pages += 1
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
@@ -111,10 +130,20 @@ class SyncService:
                     self.writer.write_post(record)
                     counts["bookmarks_seen"] += 1
                     counts["posts_upserted"] += 1
+                self.progress(
+                    f"Bookmarks progress: {counts['bookmarks_seen']} bookmarks across "
+                    f"{bookmark_pages} page(s)"
+                )
 
             changed_post_ids: set[str] = set(seen_bookmark_ids)
             changed_thread_ids: set[str] = set()
-            for conversation_id, seeds in thread_seeds.items():
+            total_threads = len(thread_seeds)
+            for index, (conversation_id, seeds) in enumerate(thread_seeds.items(), start=1):
+                author_username = _seed_author_username(seeds) or "unknown"
+                self.progress(
+                    f"Hydrating bookmark thread {index}/{total_threads}: "
+                    f"{conversation_id} from @{author_username}"
+                )
                 thread_records, missing_ids = self._hydrate_thread(
                     conversation_id,
                     seeds,
@@ -131,6 +160,10 @@ class SyncService:
                     self.writer.write_post(record)
                     changed_post_ids.add(record["id"])
                     counts["posts_upserted"] += 1
+                self.progress(
+                    f"Thread progress: {counts['threads_written']}/{total_threads} thread(s), "
+                    f"{counts['posts_upserted']} posts materialized"
+                )
 
             for record in bookmark_records:
                 bookmark_payload = {
@@ -155,6 +188,10 @@ class SyncService:
                 if bookmark and record:
                     self.writer.write_bookmark(bookmark, record)
             counts["bookmarks_removed"] = len(removed)
+            self.progress(
+                f"Bookmarks complete: {counts['bookmarks_seen']} bookmarks, "
+                f"{counts['threads_written']} thread docs"
+            )
 
             result = SyncResult(
                 scope="bookmarks",

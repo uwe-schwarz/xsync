@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -32,16 +33,24 @@ def _paths(repo_root: Path | None = None) -> RepoPaths:
     return RepoPaths.from_root((repo_root or Path.cwd()).resolve())
 
 
-def _services(repo_root: Path | None = None) -> Services:
+def _services(
+    repo_root: Path | None = None,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> Services:
     paths = _paths(repo_root)
     paths.ensure()
     config = AppConfig.load(paths)
     token_manager = TokenManager(config.x, TokenStore(paths.token_file))
-    api = XApi(config.x, token_manager)
+    api = XApi(config.x, token_manager, progress=progress)
     store = StateStore(paths.state_db)
     writer = ArchiveWriter(paths)
-    syncer = SyncService(api, store, writer)
+    syncer = SyncService(api, store, writer, progress=progress)
     return paths, config, token_manager, api, store, writer, syncer
+
+
+def _progress(message: str) -> None:
+    typer.echo(message, err=True)
 
 
 @app.command("init-config")
@@ -91,7 +100,9 @@ def whoami() -> None:
 
 @sync_app.command("posts")
 def sync_posts() -> None:
-    paths, config, token_manager, api, store, writer, syncer = _services()  # noqa: ARG001
+    paths, config, token_manager, api, store, writer, syncer = _services(  # noqa: ARG001
+        progress=_progress
+    )
     me = api.get_me()["data"]
     result = syncer.sync_posts(str(me["username"]))
     typer.echo(json.dumps(result.__dict__, indent=2, ensure_ascii=False, sort_keys=True))
@@ -99,7 +110,9 @@ def sync_posts() -> None:
 
 @sync_app.command("bookmarks")
 def sync_bookmarks() -> None:
-    paths, config, token_manager, api, store, writer, syncer = _services()  # noqa: ARG001
+    paths, config, token_manager, api, store, writer, syncer = _services(  # noqa: ARG001
+        progress=_progress
+    )
     me = api.get_me()["data"]
     result = syncer.sync_bookmarks(str(me["id"]))
     typer.echo(json.dumps(result.__dict__, indent=2, ensure_ascii=False, sort_keys=True))
@@ -113,7 +126,9 @@ def sync_all(
         help="Skip git commit/push even if auto_push is enabled.",
     ),
 ) -> None:
-    paths, config, token_manager, api, store, writer, syncer = _services()  # noqa: ARG001
+    paths, config, token_manager, api, store, writer, syncer = _services(  # noqa: ARG001
+        progress=_progress
+    )
     me = api.get_me()["data"]
     result = syncer.sync_all(
         username=str(me["username"]),

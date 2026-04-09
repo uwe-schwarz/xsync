@@ -153,3 +153,21 @@ def test_sync_posts_and_bookmarks(tmp_path: Path) -> None:
     assert (tmp_path / "x-threads" / "100.json").exists()
     assert (tmp_path / "x-media" / "media-1.jpg").exists()
     assert "posts.get_by_ids" not in bookmarks_result.usage
+
+
+def test_sync_reports_progress(tmp_path: Path) -> None:
+    paths = RepoPaths.from_root(tmp_path)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"image-bytes"))
+    writer = ArchiveWriter(paths, http_client=httpx.Client(transport=transport))
+    store = StateStore(paths.state_db)
+    api = FakeApi()
+    messages: list[str] = []
+    syncer = SyncService(api, store, writer, progress=messages.append)
+
+    syncer.sync_posts("alice")
+    syncer.sync_bookmarks("user-1")
+
+    assert any(message.startswith("Syncing original posts") for message in messages)
+    assert any(message.startswith("Posts progress:") for message in messages)
+    assert any(message.startswith("Syncing bookmarks") for message in messages)
+    assert any(message.startswith("Hydrating bookmark thread") for message in messages)
