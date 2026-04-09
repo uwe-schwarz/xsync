@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync personal X archive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/xsync
+ExecStart=/usr/bin/env uv run xsync sync all
+

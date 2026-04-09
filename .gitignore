@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+.xsync/
+
+x-media/
+x-posts/
+x-bookmarks/
+x-threads/
+x-sync-runs/
