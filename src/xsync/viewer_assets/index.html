@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>xsync archive viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="shell">
+      <aside class="sidebar shell-panel">
+        <div class="brand">
+          <div class="brand-mark">x</div>
+          <div>
+            <div class="eyebrow">xsync archive</div>
+            <h1>Posts</h1>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <label class="search-label" for="search">Search</label>
+          <input
+            id="search"
+            class="search-input"
+            type="search"
+            placeholder="Search authors, text, ids"
+          />
+        </div>
+
+        <div class="sidebar-section">
+          <div class="section-title">View</div>
+          <div class="segmented" id="filter-segment">
+            <button class="segment is-active" data-filter="all" type="button">All</button>
+            <button class="segment" data-filter="bookmarked" type="button">Bookmarked</button>
+            <button class="segment" data-filter="threads" type="button">Threads</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="section-title">Archive Stats</div>
+          <dl class="stats" id="stats"></dl>
+        </div>
+
+        <div class="sidebar-section sidebar-meta">
+          <div class="section-title">Source</div>
+          <div class="meta-line" id="archive-root">Loading…</div>
+          <div class="meta-line" id="generated-at"></div>
+        </div>
+      </aside>
+
+      <main class="timeline shell-panel">
+        <header class="panel-header">
+          <div>
+            <div class="eyebrow">Timeline</div>
+            <h2 id="result-title">Loading posts…</h2>
+          </div>
+          <div class="result-meta" id="result-count"></div>
+        </header>
+        <div class="timeline-list" id="timeline-list"></div>
+      </main>
+
+      <section class="detail shell-panel">
+        <header class="panel-header">
+          <div>
+            <div class="eyebrow">Thread</div>
+            <h2 id="detail-title">Select a post</h2>
+          </div>
+          <a class="ghost-link hidden" id="detail-open" href="#" target="_blank" rel="noreferrer">
+            Open on X
+          </a>
+        </header>
+        <div class="detail-body" id="detail-body">
+          <div class="empty-state">
+            Pick a post to inspect the thread, links, media, and archived metadata.
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <template id="timeline-card-template">
+      <article class="post-card" tabindex="0">
+        <div class="post-avatar-wrap">
+          <img class="post-avatar" alt="" />
+        </div>
+        <div class="post-main">
+          <div class="post-header">
+            <div class="author-line">
+              <span class="author-name"></span>
+              <span class="author-verified hidden">Verified</span>
+              <span class="author-handle"></span>
+            </div>
+            <time class="post-time"></time>
+          </div>
+          <div class="post-text"></div>
+          <div class="post-media"></div>
+          <div class="post-tags"></div>
+          <div class="metric-row"></div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

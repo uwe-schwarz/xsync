@@ -4,6 +4,7 @@ import json
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -12,6 +13,7 @@ from xsync.exporter import ArchiveWriter
 from xsync.store import StateStore
 from xsync.syncer import SyncService
 from xsync.token import TokenManager, TokenStore, wait_for_oauth_callback
+from xsync.viewer import DEFAULT_VIEWER_PORT, run_viewer
 from xsync.x_api import XApi
 
 app = typer.Typer(help="Archive your personal X posts and bookmarks.")
@@ -96,6 +98,42 @@ def whoami() -> None:
     paths, config, token_manager, api, store, writer, syncer = _services()  # noqa: ARG001
     me = api.get_me()
     typer.echo(json.dumps(me, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+@app.command()
+def view(
+    archive_root: Annotated[Path | None, typer.Option(
+        "--archive-root",
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        help="Path to the archive repo containing x-posts, x-bookmarks, x-threads, and x-media.",
+    )] = None,
+    host: Annotated[str, typer.Option("--host", help="Bind host for the viewer server.")] = (
+        "127.0.0.1"
+    ),
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            min=0,
+            help="Preferred port. Uses the next free port if this one is busy.",
+        ),
+    ] = DEFAULT_VIEWER_PORT,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open-browser/--no-open-browser",
+            help="Open the viewer URL in a browser.",
+        ),
+    ] = True,
+) -> None:
+    run_viewer(
+        archive_root,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+    )
 
 
 @sync_app.command("posts")

@@ -41,6 +41,24 @@ Run a full sync:
 uv run xsync sync all
 ```
 
+## Archive viewer
+
+You can browse archived posts in a local web UI:
+
+```bash
+uv run xsync view --archive-root ../x-archive
+```
+
+If you run the command from inside the archive repo, `--archive-root` is optional. When you run it
+from the `xsync` source repo, the viewer also tries to auto-detect a sibling `x-archive` checkout.
+
+The viewer serves a dark-mode interface for:
+
+- browsing all archived posts
+- filtering bookmarks and threaded conversations
+- searching authors, ids, and post text
+- inspecting full local threads and downloaded media
+
 ## Separate archive repo
 
 `xsync` writes archive files into the current working tree, then commits and pushes that same repo.
@@ -56,7 +74,7 @@ Example:
 
 ```bash
 # code repo
-git clone [email protected]:uwe-schwarz/xsync.git /opt/xsync
+git clone git@github.com:uwe-schwarz/xsync.git /opt/xsync
 cd /opt/xsync
 uv sync
 
@@ -96,7 +114,7 @@ uv tool install git+https://github.com/uwe-schwarz/xsync.git
 For a private GitHub repo, SSH is usually simplest:
 
 ```bash
-uv tool install git+ssh://[email protected]/uwe-schwarz/xsync.git
+uv tool install git+ssh://git@github.com/uwe-schwarz/xsync.git
 ```
 
 Then run it from inside the archive repo:
@@ -173,7 +191,7 @@ Environment variables override file values:
 
 ## Systemd
 
-Example unit files are in [`systemd/xsync.service`](/Users/uwe/dev/x/xsync/systemd/xsync.service) and [`systemd/xsync.timer`](/Users/uwe/dev/x/xsync/systemd/xsync.timer).
+Example unit files are in [`systemd/xsync.service`](systemd/xsync.service) and [`systemd/xsync.timer`](systemd/xsync.timer).
 
 ## Testing
 
