@@ -131,4 +131,4 @@ def test_get_user_posts_uses_oauth_token_and_since_id() -> None:
     assert pages == [{"data": [], "meta": {}}]
     assert session.calls[0]["headers"]["Authorization"] == "Bearer user-token"
     assert session.calls[0]["params"]["since_id"] == "200"
-    assert session.calls[0]["params"]["exclude"] == "replies,reposts"
+    assert session.calls[0]["params"]["exclude"] == "replies,retweets"

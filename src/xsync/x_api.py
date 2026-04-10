@@ -139,7 +139,7 @@ class XApi:
     ) -> Iterator[dict[str, Any]]:
         params = {
             "max_results": 100,
-            "exclude": "replies,reposts",
+            "exclude": "replies,retweets",
             "tweet.fields": ",".join(TWEET_FIELDS),
             "expansions": ",".join(EXPANSIONS),
             "media.fields": ",".join(MEDIA_FIELDS),
