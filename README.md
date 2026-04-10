@@ -162,10 +162,13 @@ Environment variables override file values:
 ## API constraints
 
 - Bookmarks API returns only the current 800 most recent bookmarks.
-- `xsync` records the first and last time it observed a bookmark because X does not expose the original bookmark timestamp.
+- `xsync` treats bookmarks and posts as append-only backup inputs. Once an item is archived, later syncs do not re-scan older pages to refresh lifecycle state.
 - Authored-post sync fetches original authored posts only and excludes replies/reposts.
 - Bookmark thread hydration keeps the bookmarked post plus same-author continuation posts that directly reply to that kept chain, and excludes side-branch replies.
-- Authored-post backfill and bookmark thread hydration use `search/all`, so they consume paid API credits.
+- Initial authored-post backfill uses `search/all`. Later post syncs switch to the user timeline with `since_id`, which is much cheaper.
+- Bookmark sync stops paging as soon as it encounters the first already-archived bookmark.
+- Bookmark thread hydration reuses cached thread documents and only expands from newly seen bookmark seeds.
+- Bookmark thread hydration still uses `search/all`, so it consumes paid API credits, but only for newly discovered bookmark threads.
 - Videos and GIFs are stored as metadata plus source URLs and preview images, not full binaries.
 
 ## Systemd

@@ -85,6 +85,7 @@ def test_search_all_retries_after_rate_limit(monkeypatch) -> None:
     assert pages == [{"data": [{"id": "1"}], "meta": {}}]
     assert api.usage["posts.search_all"] == 1
     assert len(session.calls) == 2
+    assert session.calls[0]["params"]["max_results"] == 500
     assert sleeps and sleeps[0] >= 1.0
     assert any("Rate limited on posts.search_all" in message for message in messages)
 
@@ -108,3 +109,26 @@ def test_get_bookmarks_uses_oauth_token() -> None:
 
     assert pages == [{"data": [], "meta": {}}]
     assert session.calls[0]["headers"]["Authorization"] == "Bearer user-token"
+
+
+def test_get_user_posts_uses_oauth_token_and_since_id() -> None:
+    session = FakeSession(
+        [FakeResponse(status_code=200, json_data={"data": [], "meta": {}})]
+    )
+    api = XApi(
+        XConfig(
+            client_id="client-id",
+            client_secret=None,
+            redirect_uri="http://127.0.0.1",
+            scopes=DEFAULT_SCOPES,
+        ),
+        FakeTokenManager(),
+    )
+    api._client = lambda: FakeClient(session)  # type: ignore[method-assign]
+
+    pages = list(api.get_user_posts("123", since_id="200"))
+
+    assert pages == [{"data": [], "meta": {}}]
+    assert session.calls[0]["headers"]["Authorization"] == "Bearer user-token"
+    assert session.calls[0]["params"]["since_id"] == "200"
+    assert session.calls[0]["params"]["exclude"] == "replies,reposts"

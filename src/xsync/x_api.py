@@ -104,7 +104,7 @@ class XApi:
     ) -> Iterator[dict[str, Any]]:
         params = {
             "query": query,
-            "max_results": 100,
+            "max_results": 500,
             "tweet.fields": ",".join(TWEET_FIELDS),
             "expansions": ",".join(EXPANSIONS),
             "media.fields": ",".join(MEDIA_FIELDS),
@@ -126,6 +126,41 @@ class XApi:
                 progress_label=f"posts.search_all query={query!r}",
             )
             self.usage["posts.search_all"] += 1
+            yield page
+            pagination_token = _next_token(page)
+            if not pagination_token:
+                break
+
+    def get_user_posts(
+        self,
+        user_id: str,
+        *,
+        since_id: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        params = {
+            "max_results": 100,
+            "exclude": "replies,reposts",
+            "tweet.fields": ",".join(TWEET_FIELDS),
+            "expansions": ",".join(EXPANSIONS),
+            "media.fields": ",".join(MEDIA_FIELDS),
+            "user.fields": ",".join(USER_FIELDS),
+            "place.fields": ",".join(PLACE_FIELDS),
+        }
+        if since_id is not None:
+            params["since_id"] = since_id
+        pagination_token: str | None = None
+        while True:
+            page_params = dict(params)
+            if pagination_token:
+                page_params["pagination_token"] = pagination_token
+            page = self._request_json(
+                path=f"/2/users/{user_id}/tweets",
+                params=page_params,
+                auth_mode="oauth2",
+                usage_label="users.get_posts",
+                progress_label=f"users.get_posts user_id={user_id}",
+            )
+            self.usage["users.get_posts"] += 1
             yield page
             pagination_token = _next_token(page)
             if not pagination_token:

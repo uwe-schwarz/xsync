@@ -35,25 +35,30 @@ class SyncService:
         self.writer = writer
         self.progress = progress or (lambda _: None)
 
-    def sync_posts(self, username: str) -> SyncResult:
+    def sync_posts(self, user_id: str, username: str) -> SyncResult:
         observed_at = utc_now()
         self.api.usage.clear()
         run_id = self.store.record_run_start("posts")
         counts = {"posts_upserted": 0}
         try:
             self.progress(f"Syncing original posts for @{username}")
+            backfill_complete = self.store.get_sync_state("authored_backfill_complete") == "1"
             since_id = self.store.get_sync_state("authored_since_id")
             max_seen_id = since_id
             changed_post_ids: set[str] = set()
             pages_seen = 0
-            for page in self.api.search_all(
-                query=_authored_posts_query(username),
-                since_id=since_id,
-            ):
+            if backfill_complete:
+                pages = self.api.get_user_posts(user_id, since_id=since_id)
+            else:
+                pages = self.api.search_all(query=_authored_posts_query(username))
+
+            for page in pages:
                 pages_seen += 1
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
+                    if self.store.has_post(record["id"]):
+                        continue
                     self.store.upsert_post(record, "authored", observed_at)
                     self.writer.write_post(record)
                     changed_post_ids.add(record["id"])
@@ -63,6 +68,7 @@ class SyncService:
                     f"Posts progress: {counts['posts_upserted']} originals fetched across "
                     f"{pages_seen} page(s)"
                 )
+            self.store.set_sync_state("authored_backfill_complete", "1")
             if max_seen_id:
                 self.store.set_sync_state("authored_since_id", max_seen_id)
             self.progress(f"Posts complete: {counts['posts_upserted']} originals")
@@ -116,16 +122,18 @@ class SyncService:
             self.progress("Syncing bookmarks")
             bookmark_records: list[dict[str, Any]] = []
             thread_seeds: dict[str, list[dict[str, Any]]] = defaultdict(list)
-            seen_bookmark_ids: set[str] = set()
             bookmark_pages = 0
+            known_bookmark_seen = False
             for page in self.api.get_bookmarks(user_id):
                 bookmark_pages += 1
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
+                    if self.store.has_bookmark(record["id"]):
+                        known_bookmark_seen = True
+                        break
                     bookmark_records.append(record)
                     thread_seeds[record["conversation_id"]].append(record)
-                    seen_bookmark_ids.add(record["id"])
                     self.store.upsert_post(record, "bookmark", observed_at)
                     self.writer.write_post(record)
                     counts["bookmarks_seen"] += 1
@@ -134,8 +142,10 @@ class SyncService:
                     f"Bookmarks progress: {counts['bookmarks_seen']} bookmarks across "
                     f"{bookmark_pages} page(s)"
                 )
+                if known_bookmark_seen:
+                    break
 
-            changed_post_ids: set[str] = set(seen_bookmark_ids)
+            changed_post_ids: set[str] = {record["id"] for record in bookmark_records}
             changed_thread_ids: set[str] = set()
             total_threads = len(thread_seeds)
             for index, (conversation_id, seeds) in enumerate(thread_seeds.items(), start=1):
@@ -155,6 +165,8 @@ class SyncService:
                 counts["threads_written"] += 1
 
                 for record in thread_records:
+                    if self.store.has_post(record["id"]):
+                        continue
                     self.store.upsert_post(record, "thread", observed_at)
                     self.writer.write_post(record)
                     changed_post_ids.add(record["id"])
@@ -180,13 +192,6 @@ class SyncService:
                 if bookmark:
                     self.writer.write_bookmark(bookmark, record)
 
-            removed = self.store.mark_missing_bookmarks_removed(seen_bookmark_ids, observed_at)
-            for post_id in removed:
-                bookmark = self.store.get_bookmark(post_id)
-                record = self.store.get_post(post_id)
-                if bookmark and record:
-                    self.writer.write_bookmark(bookmark, record)
-            counts["bookmarks_removed"] = len(removed)
             self.progress(
                 f"Bookmarks complete: {counts['bookmarks_seen']} bookmarks, "
                 f"{counts['threads_written']} thread docs"
@@ -208,7 +213,7 @@ class SyncService:
                         "usage": dict(self.api.usage),
                         "changed_post_ids": sorted(changed_post_ids),
                         "changed_thread_ids": sorted(changed_thread_ids),
-                        "removed_bookmark_ids": sorted(removed),
+                        "removed_bookmark_ids": [],
                     },
                 )
             )
@@ -240,7 +245,7 @@ class SyncService:
         auto_push: bool,
     ) -> SyncResult:
         start = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        posts_result = self.sync_posts(username)
+        posts_result = self.sync_posts(user_id, username)
         bookmarks_result = self.sync_bookmarks(user_id)
         combined_counts = _merge_counts(posts_result.counts, bookmarks_result.counts)
         combined_usage = _merge_counts(posts_result.usage, bookmarks_result.usage)
@@ -272,14 +277,20 @@ class SyncService:
         conversation_id: str,
         seeds: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        records_by_id = {seed["id"]: seed for seed in seeds}
-        pending_parent_ids = list(records_by_id)
+        records_by_id = _thread_records_by_id(self.store.get_thread(conversation_id))
+        pending_parent_ids = []
+        pending_parent_id_set: set[str] = set()
+        for seed in seeds:
+            records_by_id[seed["id"]] = seed
+            pending_parent_id_set.add(seed["id"])
+            pending_parent_ids.append(seed["id"])
         hydrated_parent_ids: set[str] = set()
         while pending_parent_ids:
             parent_id = pending_parent_ids.pop()
             if parent_id in hydrated_parent_ids:
                 continue
             hydrated_parent_ids.add(parent_id)
+            pending_parent_id_set.discard(parent_id)
 
             parent = records_by_id.get(parent_id)
             if parent is None:
@@ -288,16 +299,28 @@ class SyncService:
             if author_username is None:
                 continue
 
+            state_key = _thread_parent_state_key(conversation_id, parent_id)
+            since_id = self.store.get_sync_state(state_key)
+            max_seen_id = since_id or parent_id
             for page in self.api.search_all(
                 query=_bookmark_thread_query(conversation_id, parent_id, author_username),
+                since_id=since_id,
             ):
                 includes = page.get("includes", {})
                 for post in page.get("data", []):
                     record = build_post_record(post, includes)
                     record_id = record["id"]
-                    if record_id not in records_by_id:
+                    if (
+                        record_id not in records_by_id
+                        and record_id not in hydrated_parent_ids
+                        and record_id not in pending_parent_id_set
+                    ):
+                        pending_parent_id_set.add(record_id)
                         pending_parent_ids.append(record_id)
                     records_by_id[record_id] = record
+                    max_seen_id = _max_snowflake(max_seen_id, record_id)
+            if max_seen_id:
+                self.store.set_sync_state(state_key, max_seen_id)
 
         records = sorted(
             records_by_id.values(),
@@ -332,6 +355,20 @@ def _bookmark_thread_query(conversation_id: str, parent_id: str, author_username
         f"in_reply_to_tweet_id:{parent_id} "
         f"from:{author_username}"
     )
+
+
+def _thread_parent_state_key(conversation_id: str, parent_id: str) -> str:
+    return f"thread_parent_since_id:{conversation_id}:{parent_id}"
+
+
+def _thread_records_by_id(thread: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not thread:
+        return {}
+    return {
+        str(record["id"]): record
+        for record in thread.get("posts", [])
+        if isinstance(record, dict) and record.get("id")
+    }
 
 
 def _record_author_username(record: dict[str, Any]) -> str | None:

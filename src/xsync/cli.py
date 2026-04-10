@@ -104,7 +104,7 @@ def sync_posts() -> None:
         progress=_progress
     )
     me = api.get_me()["data"]
-    result = syncer.sync_posts(str(me["username"]))
+    result = syncer.sync_posts(str(me["id"]), str(me["username"]))
     typer.echo(json.dumps(result.__dict__, indent=2, ensure_ascii=False, sort_keys=True))
 
 

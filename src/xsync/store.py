@@ -181,6 +181,11 @@ class StateStore:
             row = conn.execute("SELECT post_json FROM posts WHERE id = ?", (post_id,)).fetchone()
             return None if row is None else json.loads(row["post_json"])
 
+    def has_post(self, post_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM posts WHERE id = ?", (post_id,)).fetchone()
+            return row is not None
+
     def upsert_thread(self, conversation_id: str, thread: dict[str, Any], observed_at: str) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -283,3 +288,8 @@ class StateStore:
                 "removed_at": row["removed_at"],
                 "bookmark": json.loads(row["bookmark_json"]),
             }
+
+    def has_bookmark(self, post_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM bookmarks WHERE post_id = ?", (post_id,)).fetchone()
+            return row is not None
