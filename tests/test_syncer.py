@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from xsync.config import RepoPaths
-from xsync.exporter import ArchiveWriter
+from xsync.exporter import ArchiveWriter, build_thread_document
 from xsync.store import StateStore
 from xsync.syncer import SyncService
 
@@ -257,6 +257,87 @@ def test_incremental_sync_only_fetches_new_posts_and_bookmarks(tmp_path: Path) -
     assert api.search_queries.count(query_101) == 1
     assert api.search_queries.count(query_102) == 1
     assert api.search_queries.count(query_103) == 1
+
+
+def test_sync_bookmarks_reuses_cached_seed_threads_without_requerying(tmp_path: Path) -> None:
+    @dataclass
+    class CachedSeedApi(FakeApi):
+        def get_bookmarks(self, user_id: str):  # noqa: ANN202
+            self.usage["users.get_bookmarks"] = self.usage.get("users.get_bookmarks", 0) + 1
+            self.bookmark_page_reads += 1
+            yield _page(
+                [
+                    {
+                        "id": "103",
+                        "author_id": "other-2",
+                        "conversation_id": "100",
+                        "created_at": "2026-04-10T09:07:00Z",
+                        "text": "new bookmarked reply",
+                        "referenced_tweets": [{"id": "102", "type": "replied_to"}],
+                        "public_metrics": {"like_count": 5},
+                    }
+                ],
+                {"users": [_user("other-2", "replier", "Replier")]},
+            )
+
+    paths = RepoPaths.from_root(tmp_path)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"image-bytes"))
+    writer = ArchiveWriter(paths, http_client=httpx.Client(transport=transport))
+    store = StateStore(paths.state_db)
+    api = CachedSeedApi(run=2)
+    syncer = SyncService(api, store, writer)
+
+    cached_seed = {
+        "id": "103",
+        "author_id": "other-2",
+        "conversation_id": "100",
+        "created_at": "2026-04-10T09:07:00Z",
+        "url": "https://x.com/replier/status/103",
+        "author": _user("other-2", "replier", "Replier"),
+        "post": {
+            "id": "103",
+            "author_id": "other-2",
+            "conversation_id": "100",
+            "created_at": "2026-04-10T09:07:00Z",
+            "text": "new bookmarked reply",
+            "referenced_tweets": [{"id": "102", "type": "replied_to"}],
+            "public_metrics": {"like_count": 5},
+        },
+        "media": [],
+    }
+    cached_continuation = {
+        "id": "104",
+        "author_id": "other-2",
+        "conversation_id": "100",
+        "created_at": "2026-04-10T09:08:00Z",
+        "url": "https://x.com/replier/status/104",
+        "author": _user("other-2", "replier", "Replier"),
+        "post": {
+            "id": "104",
+            "author_id": "other-2",
+            "conversation_id": "100",
+            "created_at": "2026-04-10T09:08:00Z",
+            "text": "new continuation",
+            "referenced_tweets": [{"id": "103", "type": "replied_to"}],
+            "public_metrics": {"like_count": 6},
+        },
+        "media": [],
+    }
+
+    for record in (cached_seed, cached_continuation):
+        store.upsert_post(record, "thread", "2026-04-10T09:09:00Z")
+    store.upsert_thread(
+        "100",
+        build_thread_document("100", [cached_seed, cached_continuation], []),
+        "2026-04-10T09:09:00Z",
+    )
+    store.set_sync_state("thread_parent_since_id:100:103", "104")
+
+    bookmarks_result = syncer.sync_bookmarks("user-1")
+
+    assert bookmarks_result.counts["bookmarks_seen"] == 1
+    assert (tmp_path / "x-bookmarks" / "103.md").exists()
+    assert "conversation_id:100 in_reply_to_tweet_id:103 from:replier" not in api.search_queries
 
 
 def test_sync_reports_progress(tmp_path: Path) -> None:

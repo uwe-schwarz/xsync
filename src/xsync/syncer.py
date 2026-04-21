@@ -278,12 +278,17 @@ class SyncService:
         seeds: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str]]:
         records_by_id = _thread_records_by_id(self.store.get_thread(conversation_id))
+        cached_record_ids = set(records_by_id)
         pending_parent_ids = []
         pending_parent_id_set: set[str] = set()
         for seed in seeds:
-            records_by_id[seed["id"]] = seed
-            pending_parent_id_set.add(seed["id"])
-            pending_parent_ids.append(seed["id"])
+            seed_id = seed["id"]
+            records_by_id[seed_id] = seed
+            state_key = _thread_parent_state_key(conversation_id, seed_id)
+            if seed_id in cached_record_ids and self.store.get_sync_state(state_key):
+                continue
+            pending_parent_id_set.add(seed_id)
+            pending_parent_ids.append(seed_id)
         hydrated_parent_ids: set[str] = set()
         while pending_parent_ids:
             parent_id = pending_parent_ids.pop()
